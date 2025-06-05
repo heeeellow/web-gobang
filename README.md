@@ -1,8 +1,7 @@
 
----
 
 # 前端框架详细设计 
-
+---
 ## 项目简介
 
 本项目为**网页五子棋在线对战系统**前端，基于 `Vue3` + `Vite` + `Tailwind CSS` 实现，配合 RESTful API 及 WebSocket 实现实时房间、棋局与聊天。
@@ -230,4 +229,151 @@
 5. **轮到用户A下棋**，点击棋盘，发`chess_move`，服务端判定后广播`chess_move`
 6. **有人发言**，发`chat`，服务端推送所有人`chat`
 7. **有人认输/超时/胜负/离开房间**，均发消息，服务端统一广播相关状态
+
+# 数据库设计
+---
+## 一、表结构设计
+
+---
+
+### 1. 用户表（users）
+
+|    字段名    |     类型     | 主键 |       约束       |         说明         |
+| ----------- | ----------- | ---- | --------------- | -------------------- |
+| id          | INT         | √    | AUTO\_INCREMENT | 用户唯一ID            |
+| username    | VARCHAR(32) |      | UNIQUE          | 用户名               |
+| password    | VARCHAR(64) |      | NOT NULL        | 密码                 |
+| email       | VARCHAR(64) |      |                 | 邮箱                 |
+| token       | VARCHAR(64) |      |                 | 当前登录token（可选） |
+| is\_online  | TINYINT(1)  |      | DEFAULT 0       | 在线状态              |
+| last\_login | DATETIME    |      |                 | 上次登录时间          |
+| created\_at | DATETIME    |      |                 | 注册时间              |
+   
+---
+
+### 2. 房间表（rooms）
+
+| 字段名         | 类型                               | 主键 | 约束                | 说明           |
+| ----------- | -------------------------------- | -- | ----------------- | ------------ |
+| id          | INT                              | √  | AUTO\_INCREMENT   | 房间唯一ID       |
+| name        | VARCHAR(32)                      |    | NOT NULL          | 房间名称         |
+| password    | VARCHAR(64)                      |    |                   | 房间密码Hash（如有） |
+| status      | ENUM('waiting','playing','full') |    | DEFAULT 'waiting' | 房间状态         |
+| created\_by | INT                              |    |                   | 创建者用户ID      |
+| created\_at | DATETIME                         |    |                   | 创建时间         |
+| updated\_at | DATETIME                         |    |                   | 最后更新时间       |
+
+---
+
+### 3. 房间成员表（room\_members）
+
+| 字段名        | 类型                                | 主键 | 约束                  | 说明   |
+| ---------- | --------------------------------- | -- | ------------------- | ---- |
+| id         | INT                               | √  | AUTO\_INCREMENT     | 自增ID |
+| room\_id   | INT                               |    | NOT NULL            | 房间ID |
+| user\_id   | INT                               |    | NOT NULL            | 用户ID |
+| role       | ENUM('black','white','spectator') |    | DEFAULT 'spectator' | 身份   |
+| ready      | TINYINT(1)                        |    | DEFAULT 0           | 是否准备 |
+| joined\_at | DATETIME                          |    |                     | 加入时间 |
+
+> 说明：同一房间黑白玩家+观战/准备状态全部由此表维护，离开房间即删除此表记录。
+
+---
+
+### 4. 对局/棋谱表（games）
+
+| 字段名         | 类型          | 主键 | 约束              | 说明               |
+| ----------- | ----------- | -- | --------------- | ---------------- |
+| id          | INT         | √  | AUTO\_INCREMENT | 对局ID             |
+| room\_id    | INT         |    | NOT NULL        | 房间ID             |
+| black\_user | INT         |    | NOT NULL        | 黑方用户ID           |
+| white\_user | INT         |    | NOT NULL        | 白方用户ID           |
+| winner      | INT         |    |                 | 胜者用户ID           |
+| reason      | VARCHAR(32) |    |                 | 结束原因（五连/认输/超时）   |
+| moves       | TEXT        |    |                 | 棋谱（JSON序列化：数组形式） |
+| started\_at | DATETIME    |    |                 | 开始时间             |
+| ended\_at   | DATETIME    |    |                 | 结束时间             |
+
+---
+
+### 5. 聊天/消息表（room\_messages）
+
+| 字段名      | 类型           | 主键 | 约束              | 说明     |
+| -------- | ------------ | -- | --------------- | ------ |
+| id       | INT          | √  | AUTO\_INCREMENT | 自增ID   |
+| room\_id | INT          |    | NOT NULL        | 房间ID   |
+| user\_id | INT          |    | NOT NULL        | 发送用户ID |
+| content  | VARCHAR(512) |    | NOT NULL        | 消息内容   |
+| sent\_at | DATETIME     |    |                 | 发送时间   |
+
+---
+
+## 二、建表SQL示例
+
+```sql
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(32) UNIQUE,
+    password VARCHAR(64) NOT NULL,
+    email VARCHAR(64),
+    token VARCHAR(64),
+    is_online TINYINT(1) DEFAULT 0,
+    last_login DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE rooms (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(32) NOT NULL,
+    password VARCHAR(64),
+    status ENUM('waiting','playing','full') DEFAULT 'waiting',
+    created_by INT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE room_members (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    room_id INT NOT NULL,
+    user_id INT NOT NULL,
+    role ENUM('black','white','spectator') DEFAULT 'spectator',
+    ready TINYINT(1) DEFAULT 0,
+    joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX(room_id),
+    INDEX(user_id)
+);
+
+CREATE TABLE games (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    room_id INT NOT NULL,
+    black_user INT NOT NULL,
+    white_user INT NOT NULL,
+    winner INT,
+    reason VARCHAR(32),
+    moves TEXT,
+    started_at DATETIME,
+    ended_at DATETIME
+);
+
+CREATE TABLE room_messages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    room_id INT NOT NULL,
+    user_id INT NOT NULL,
+    content VARCHAR(512) NOT NULL,
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX(room_id),
+    INDEX(user_id)
+);
+```
+
+---
+
+## 三、设计说明
+
+* 用户在线状态、token仅作为简单标记，实际应配合后端session或websocket维护。
+* 棋谱存储（games.moves）：建议用JSON数组，格式如：`[{"x":7,"y":7,"color":"black"},{"x":8,"y":7,"color":"white"}, ...]`。
+* 对局历史与房间分离，便于日后查询和复盘。
+* 聊天消息/对局/成员都可随房间id快速检索。
+* 观战、准备状态全部在room\_members表维护。
+
 
